@@ -3,63 +3,85 @@ import cv2
 import numpy as np
 
 
+def get_roi_mask(image):
+    """Creates a triangular/trapezoidal Region of Interest mask focused on the road lane."""
+    height, width = image.shape[:2]
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    # Focus on the bottom half of the image where lanes sit
+    polygon = np.array(
+        [
+            [
+                (int(width * 0.05), height),  # Bottom-left
+                (int(width * 0.45), int(height * 0.60)),  # Top-left apex
+                (int(width * 0.55), int(height * 0.60)),  # Top-right apex
+                (int(width * 0.95), height),  # Bottom-right
+            ]
+        ],
+        np.int32,
+    )
+
+    cv2.fillPoly(mask, polygon, 255)
+    return mask
+
+
 def main():
     # ---------------------------------------------------------
-    # Configuration & Setup
+    # Setup & Load Image
     # ---------------------------------------------------------
-    input_path = "input_image.jpg"  # Place your test image in the same directory
-    output_dir = "output_stages"
+    input_path = "road_input.jpg"  # Replace with your road/dashcam image
+    output_dir = "road_output_stages"
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Load the original image
+    # 1. Load original image
     original = cv2.imread(input_path)
     if original is None:
         raise FileNotFoundError(
-            f"Image not found at '{input_path}'. Please check the path."
+            f"Could not load image at '{input_path}'. Check your file name."
         )
 
-    # 2. Display the original image
-    cv2.imshow("01 - Original Image", original)
+    # 2. Display and save original
+    cv2.imshow("01 - Original Road", original)
     cv2.imwrite(os.path.join(output_dir, "01_original.png"), original)
 
     # ---------------------------------------------------------
     # Color Conversions
     # ---------------------------------------------------------
-    # 3. Convert to Grayscale
+    # 3. Grayscale
     gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
     cv2.imwrite(os.path.join(output_dir, "02_grayscale.png"), gray)
 
-    # 4. Convert to HSV
+    # 4. HSV (Useful for isolating yellow & white lane markings)
     hsv = cv2.cvtColor(original, cv2.COLOR_BGR2HSV)
     cv2.imwrite(os.path.join(output_dir, "03_hsv.png"), hsv)
 
     # ---------------------------------------------------------
-    # Image Filtering (At least two filters)
+    # Filtering (2 distinct filters)
     # ---------------------------------------------------------
-    # Filter 1: Gaussian Blur (smooths high-frequency noise)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 1.5)
+    # Filter 1: Bilateral Filter (smoothes road asphalt texture while keeping line edges sharp)
+    bilateral = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
 
-    # Filter 2: Median Blur (removes salt-and-pepper noise while preserving edges)
-    filtered = cv2.medianBlur(blurred, 5)
+    # Filter 2: Gaussian Blur (removes any remaining high-frequency pixel noise)
+    filtered = cv2.GaussianBlur(bilateral, (5, 5), 0)
     cv2.imwrite(os.path.join(output_dir, "04_filtered.png"), filtered)
 
     # ---------------------------------------------------------
-    # Edge Detection
+    # Canny Edge Detection & ROI Masking
     # ---------------------------------------------------------
-    # 5. Canny Edge Detection (adjust thresholds to suit your lighting/objects)
-    canny_edges = cv2.Canny(filtered, threshold1=50, threshold2=150)
-    cv2.imwrite(os.path.join(output_dir, "05_canny_edges.png"), canny_edges)
+    # 5. Canny Edge Detection
+    edges = cv2.Canny(filtered, threshold1=50, threshold2=150)
 
-    # Optional: Morphological close to bridge broken edges
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    closed_edges = cv2.morphologyEx(canny_edges, cv2.MORPH_CLOSE, kernel)
+    # Restrict edges to the road lane area (cuts out trees, sky, hood of car)
+    roi_mask = get_roi_mask(edges)
+    masked_edges = cv2.bitwise_and(edges, roi_mask)
+    cv2.imwrite(os.path.join(output_dir, "05_canny_edges.png"), masked_edges)
 
     # ---------------------------------------------------------
-    # Contours
+    # Contours Detection
     # ---------------------------------------------------------
-    # 6. Find and draw contours
-    contours, hierarchy = cv2.findContours(
-        closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    # 6. Detect and draw contours of the lane segments
+    contours, _ = cv2.findContours(
+        masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
     contour_canvas = original.copy()
@@ -67,55 +89,38 @@ def main():
     cv2.imwrite(os.path.join(output_dir, "06_contours.png"), contour_canvas)
 
     # ---------------------------------------------------------
-    # Geometric Detection & Final Results
+    # Geometric Detection: Hough Line Detection
     # ---------------------------------------------------------
-    # 7. Geometric detections: Bounding Box, Min-Area Rect, Enclosing Circle
+    # 7. Detect line vectors using Probabilistic Hough Transform
     final_output = original.copy()
-    min_area_threshold = 200  # Filter out tiny noise contours
-
-    detected_count = 0
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < min_area_threshold:
-            continue
-
-        detected_count += 1
-
-        # Geometric 1: Upright Bounding Box (Blue)
-        x, y, w, h = cv2.boundingRect(cnt)
-        cv2.rectangle(final_output, (x, y), (x + w, y + h), (255, 0, 0), 2)
-
-        # Geometric 2: Minimum-Area Rotated Rectangle (Red)
-        rect = cv2.minAreaRect(cnt)
-        box = cv2.boxPoints(rect)
-        box = np.int32(box)
-        cv2.drawContours(final_output, [box], 0, (0, 0, 255), 2)
-
-        # Geometric 3: Minimum Enclosing Circle (Yellow)
-        (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-        cv2.circle(
-            final_output, (int(cx), int(cy)), int(radius), (0, 255, 255), 2
-        )
-
-        # Geometric 4: Polygon Approximation / Convex Hull (Optional showcase)
-        hull = cv2.convexHull(cnt)
-        cv2.drawContours(final_output, [hull], -1, (255, 128, 0), 1)
-
-    # Annotate summary on the final image
-    cv2.putText(
-        final_output,
-        f"Detected Items: {detected_count}",
-        (15, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 0, 0),
-        3,
-        cv2.LINE_AA,
+    lines = cv2.HoughLinesP(
+        masked_edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=40,
+        minLineLength=30,
+        maxLineGap=20,
     )
+
+    line_count = 0
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+
+            # Optional filter: Ignore near-horizontal lines (e.g. crosswalks/shadows)
+            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+            if abs(angle) < 15 or abs(angle) > 165:
+                continue
+
+            line_count += 1
+            # Draw detected road line in bold red
+            cv2.line(final_output, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+    # Overlay text feedback
     cv2.putText(
         final_output,
-        f"Detected Items: {detected_count}",
-        (15, 30),
+        f"Lanes Segments Detected: {line_count}",
+        (20, 40),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
         (0, 255, 255),
@@ -125,12 +130,11 @@ def main():
 
     # Save and display final result
     cv2.imwrite(os.path.join(output_dir, "07_final_result.png"), final_output)
-    cv2.imshow("07 - Final Detection", final_output)
+    cv2.imshow("07 - Final Lane Detection", final_output)
 
-    print(f"Processing complete. {detected_count} objects analyzed.")
-    print(f"All stage outputs saved to '{output_dir}/'")
+    print(f"Done! Detected {line_count} lane segments.")
+    print(f"All project stage images exported to '{output_dir}/'")
 
-    # Keep windows open until user presses any key
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
