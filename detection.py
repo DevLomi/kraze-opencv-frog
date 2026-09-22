@@ -2,142 +2,99 @@ import os
 import cv2
 import numpy as np
 
-
-def get_roi_mask(image):
-    """Creates a triangular/trapezoidal Region of Interest mask focused on the road lane."""
-    height, width = image.shape[:2]
-    mask = np.zeros((height, width), dtype=np.uint8)
-
-    # Focus on the bottom half of the image where lanes sit
-    polygon = np.array(
-        [
-            [
-                (int(width * 0.05), height),  # Bottom-left
-                (int(width * 0.45), int(height * 0.60)),  # Top-left apex
-                (int(width * 0.55), int(height * 0.60)),  # Top-right apex
-                (int(width * 0.95), height),  # Bottom-right
-            ]
-        ],
-        np.int32,
-    )
-
-    cv2.fillPoly(mask, polygon, 255)
-    return mask
+IMAGE_PATH = "road_top_view.jpg"
 
 
-def main():
-    # ---------------------------------------------------------
-    # Setup & Load Image
-    # ---------------------------------------------------------
-    input_path = "road_input.jpg"  # Replace with your road/dashcam image
-    output_dir = "road_output_stages"
-    os.makedirs(output_dir, exist_ok=True)
+# 1. Load an image using OpenCV
+img = cv2.imread(IMAGE_PATH)
+h, w = img.shape[:2]
+output_dir = "road_output_stages"
+os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Load original image
-    original = cv2.imread(input_path)
-    if original is None:
-        raise FileNotFoundError(
-            f"Could not load image at '{input_path}'. Check your file name."
-        )
-
-    # 2. Display and save original
-    cv2.imshow("01 - Original Road", original)
-    cv2.imwrite(os.path.join(output_dir, "01_original.png"), original)
-
-    # ---------------------------------------------------------
-    # Color Conversions
-    # ---------------------------------------------------------
-    # 3. Grayscale
-    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
-    cv2.imwrite(os.path.join(output_dir, "02_grayscale.png"), gray)
-
-    # 4. HSV (Useful for isolating yellow & white lane markings)
-    hsv = cv2.cvtColor(original, cv2.COLOR_BGR2HSV)
-    cv2.imwrite(os.path.join(output_dir, "03_hsv.png"), hsv)
-
-    # ---------------------------------------------------------
-    # Filtering (2 distinct filters)
-    # ---------------------------------------------------------
-    # Filter 1: Bilateral Filter (smoothes road asphalt texture while keeping line edges sharp)
-    bilateral = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
-
-    # Filter 2: Gaussian Blur (removes any remaining high-frequency pixel noise)
-    filtered = cv2.GaussianBlur(bilateral, (5, 5), 0)
-    cv2.imwrite(os.path.join(output_dir, "04_filtered.png"), filtered)
-
-    # ---------------------------------------------------------
-    # Canny Edge Detection & ROI Masking
-    # ---------------------------------------------------------
-    # 5. Canny Edge Detection
-    edges = cv2.Canny(filtered, threshold1=50, threshold2=150)
-
-    # Restrict edges to the road lane area (cuts out trees, sky, hood of car)
-    roi_mask = get_roi_mask(edges)
-    masked_edges = cv2.bitwise_and(edges, roi_mask)
-    cv2.imwrite(os.path.join(output_dir, "05_canny_edges.png"), masked_edges)
-
-    # ---------------------------------------------------------
-    # Contours Detection
-    # ---------------------------------------------------------
-    # 6. Detect and draw contours of the lane segments
-    contours, _ = cv2.findContours(
-        masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    contour_canvas = original.copy()
-    cv2.drawContours(contour_canvas, contours, -1, (0, 255, 0), 2)
-    cv2.imwrite(os.path.join(output_dir, "06_contours.png"), contour_canvas)
-
-    # ---------------------------------------------------------
-    # Geometric Detection: Hough Line Detection
-    # ---------------------------------------------------------
-    # 7. Detect line vectors using Probabilistic Hough Transform
-    final_output = original.copy()
-    lines = cv2.HoughLinesP(
-        masked_edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=40,
-        minLineLength=30,
-        maxLineGap=20,
-    )
-
-    line_count = 0
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-
-            # Optional filter: Ignore near-horizontal lines (e.g. crosswalks/shadows)
-            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-            if abs(angle) < 15 or abs(angle) > 165:
-                continue
-
-            line_count += 1
-            # Draw detected road line in bold red
-            cv2.line(final_output, (x1, y1), (x2, y2), (0, 0, 255), 3)
-
-    # Overlay text feedback
-    cv2.putText(
-        final_output,
-        f"Lanes Segments Detected: {line_count}",
-        (20, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
-    # Save and display final result
-    cv2.imwrite(os.path.join(output_dir, "07_final_result.png"), final_output)
-    cv2.imshow("07 - Final Lane Detection", final_output)
-
-    print(f"Done! Detected {line_count} lane segments.")
-    print(f"All project stage images exported to '{output_dir}/'")
-
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+# 2. Save original image 
+cv2.imwrite(os.path.join(output_dir, "01_original.png"), img)
 
 
-if __name__ == "__main__":
-    main()
+# 3. grayscale
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+cv2.imwrite(os.path.join(output_dir, "02_grayscale.png"), gray)
+
+# 4. Convert the image to HSV
+hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+cv2.imwrite(os.path.join(output_dir, "03_hsv.png"), hsv)
+
+# 5. two image filters
+gaussian = cv2.GaussianBlur(gray, (5, 5), 0)
+filtered = cv2.medianBlur(gaussian, 5)
+cv2.imwrite(os.path.join(output_dir, "04_filtered.png"), filtered)
+
+
+# 6.Canny edge detection (focused on road region)
+
+edges = cv2.Canny(filtered, 50, 150)
+# Exclude sky and mountains above the road horizon
+edges[:int(h * 0.35), :] = 0
+cv2.imwrite(os.path.join(output_dir, "05_canny_edges.png"), edges)
+
+
+# 7. Detect and draw contours using road colors (gray/black asphalt)
+    # low saturation gray/black across dark to sunlit brightness
+road_mask = cv2.inRange(hsv, np.array([0, 0, 40]), np.array([180, 90, 240]))
+road_mask[:int(h * 0.35), :] = 0  # Ignore sky and mountains
+
+contours, hierarchy = cv2.findContours(road_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+contour_img = img.copy()
+cv2.drawContours(contour_img, contours, -1, (0, 255, 0), 2)
+cv2.imwrite(os.path.join(output_dir, "06_contours.png"), contour_img)
+
+
+# 8. geometric detection
+final_output = img.copy()
+
+# Geometric Detection 1: Multiple bounding boxes narrowing down the road
+num_bands = 3
+band_h = int((h - int(h * 0.35)) / num_bands)
+for i in range(num_bands):
+    y1 = int(h * 0.35) + i * band_h
+    y2 = y1 + band_h if i < num_bands - 1 else h
+    strip = road_mask[y1:y2, :].copy()
+    cnts, _ = cv2.findContours(strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cnts:
+        c = max(cnts, key=cv2.contourArea)
+        if cv2.contourArea(c) > 500:
+            bx, by, bw, bh = cv2.boundingRect(c)
+            abs_y = y1 + by
+            cv2.rectangle(final_output, (bx, abs_y), (bx + bw, abs_y + bh), (0, 255, 255), 2)
+
+# Geometric Detection 2: Hough line detection for road borders and railings
+lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=15)
+if lines is not None:
+    for x1, y1, x2, y2 in lines.reshape(-1, 4):
+        # Ignore flat horizontal noise lines
+        if abs(y2 - y1) > 15:
+            xm, ym = (x1 + x2) // 2, (y1 + y2) // 2
+            # Interpolate road and railing corridor from horizon to bottom
+            t = (ym - h * 0.35) / (h * 0.65)
+            min_x = (1.0 - t) * (w * 0.35)
+            max_x = w * 0.75 + t * (w * 0.25)
+            # Keep lines located on the road borders and railings
+            if min_x <= xm <= max_x:
+                cv2.line(final_output, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+# 9. final process output
+scale = min(1280 / w, 720 / h)
+win_w, win_h = int(w * scale), int(h * scale)
+cv2.namedWindow("Road Detection - Final Result", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Road Detection - Final Result", win_w, win_h)
+cv2.imshow("Road Detection - Final Result", final_output)
+
+
+
+
+# 10. Save processed output
+cv2.imwrite(os.path.join(output_dir, "07_final_result.png"), final_output)
+print(f"Done! Output saved to '{output_dir}/07_final_result.png'")
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
