@@ -1,8 +1,8 @@
-import os
 import cv2
+import os
 import numpy as np
 
-IMAGE_PATH = "road_top_view.jpg"
+IMAGE_PATH = "road_in_norway.jpg"
 
 
 # 1. Load an image using OpenCV
@@ -53,7 +53,7 @@ cv2.imwrite(os.path.join(output_dir, "06_contours.png"), contour_img)
 final_output = img.copy()
 
 # Geometric Detection 1: Multiple bounding boxes narrowing down the road
-num_bands = 3
+num_bands = 5
 band_h = int((h - int(h * 0.35)) / num_bands)
 for i in range(num_bands):
     y1 = int(h * 0.35) + i * band_h
