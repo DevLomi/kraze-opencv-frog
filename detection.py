@@ -1,9 +1,12 @@
+import enum
 import cv2
 import os
 import numpy as np
 
-IMAGE_PATH = "road_in_norway.jpg"
-
+#image to detect
+IMAGE_PATH = "road_up.jpg"
+#number of boundary boxes
+BAND_NUMBER = 5
 
 # 1. Load an image using OpenCV
 img = cv2.imread(IMAGE_PATH)
@@ -24,24 +27,22 @@ hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 cv2.imwrite(os.path.join(output_dir, "03_hsv.png"), hsv)
 
 # 5. two image filters
-gaussian = cv2.GaussianBlur(gray, (5, 5), 0)
+gaussian = cv2.GaussianBlur(gray, (3, 3), 0)
 filtered = cv2.medianBlur(gaussian, 5)
 cv2.imwrite(os.path.join(output_dir, "04_filtered.png"), filtered)
 
 
 # 6.Canny edge detection (focused on road region)
 
-edges = cv2.Canny(filtered, 50, 150)
+edges = cv2.Canny(filtered, 170, 300)
 # Exclude sky and mountains above the road horizon
-edges[:int(h * 0.35), :] = 0
+edges[:int(h * 0.30), :] = 0
 cv2.imwrite(os.path.join(output_dir, "05_canny_edges.png"), edges)
 
 
 # 7. Detect and draw contours using road colors (gray/black asphalt)
     # low saturation gray/black across dark to sunlit brightness
-road_mask = cv2.inRange(hsv, np.array([0, 0, 40]), np.array([180, 90, 240]))
-road_mask[:int(h * 0.35), :] = 0  # Ignore sky and mountains
-
+road_mask = cv2.inRange(hsv, np.array([10, 10, 54]), np.array([206, 100, 240]))
 contours, hierarchy = cv2.findContours(road_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
 contour_img = img.copy()
@@ -53,8 +54,11 @@ cv2.imwrite(os.path.join(output_dir, "06_contours.png"), contour_img)
 final_output = img.copy()
 
 # Geometric Detection 1: Multiple bounding boxes narrowing down the road
-num_bands = 5
-band_h = int((h - int(h * 0.35)) / num_bands)
+if BAND_NUMBER > 3:
+    num_bands = (BAND_NUMBER + 2)
+else:
+    num_bands = (BAND_NUMBER + 1)
+band_h = int(h / num_bands)
 for i in range(num_bands):
     y1 = int(h * 0.35) + i * band_h
     y2 = y1 + band_h if i < num_bands - 1 else h
@@ -68,19 +72,17 @@ for i in range(num_bands):
             cv2.rectangle(final_output, (bx, abs_y), (bx + bw, abs_y + bh), (0, 255, 255), 2)
 
 # Geometric Detection 2: Hough line detection for road borders and railings
-lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=15)
+lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=80, maxLineGap=27)
 if lines is not None:
     for x1, y1, x2, y2 in lines.reshape(-1, 4):
-        # Ignore flat horizontal noise lines
-        if abs(y2 - y1) > 15:
-            xm, ym = (x1 + x2) // 2, (y1 + y2) // 2
-            # Interpolate road and railing corridor from horizon to bottom
-            t = (ym - h * 0.35) / (h * 0.65)
-            min_x = (1.0 - t) * (w * 0.35)
-            max_x = w * 0.75 + t * (w * 0.25)
-            # Keep lines located on the road borders and railings
-            if min_x <= xm <= max_x:
-                cv2.line(final_output, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        xm, ym = (x1 + x2) // 2, (y1 + y2) // 2
+        # Interpolate road and railing corridor from horizon to bottom
+        t = (ym - h * 0.35) / (h * 0.65)
+        min_x = (1.0 - t) * (w * 0.35)
+        max_x = w * 0.75 + t * (w * 0.25)
+        # Keep lines located on the road borders and railings
+        if min_x <= xm <= max_x:
+            cv2.line(final_output, (x1, y1), (x2, y2), (50, 50, 255), 5)
 
 # 9. final process output
 scale = min(1280 / w, 720 / h)
